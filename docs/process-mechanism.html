@@ -1,0 +1,1371 @@
+<title>Agent Comms 流程機制全解</title>
+<style>
+  :root {
+    --paper:      #F6F8F8;
+    --surface:    #FFFFFF;
+    --ink:        #101819;
+    --ink-soft:   #4C5C60;
+    --ink-faint:  #7B8B90;
+    --line:       #DBE3E4;
+    --line-soft:  #EAF0F0;
+    --accent:     #0A6B72;
+    --accent-ink: #06484D;
+    --accent-bg:  #E3F0F0;
+    --amber:      #9C5410;
+    --amber-bg:   #F7EBDC;
+    --green:      #2A6E52;
+    --red:        #A03A32;
+    --plate:      #F1F5F5;
+    --plate-line: #D3DEDE;
+    --shadow:     0 1px 2px rgba(16,24,25,.06), 0 8px 24px -16px rgba(16,24,25,.28);
+
+    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --font-sans: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0D1315;
+      --surface:    #141C1E;
+      --ink:        #E6EDEE;
+      --ink-soft:   #9BABAF;
+      --ink-faint:  #6E8085;
+      --line:       #243033;
+      --line-soft:  #1B2427;
+      --accent:     #52CFD8;
+      --accent-ink: #8AE3EA;
+      --accent-bg:  #0F2B2E;
+      --amber:      #D79A55;
+      --amber-bg:   #2A2015;
+      --green:      #6BC49A;
+      --red:        #E0837A;
+      --plate:      #EFF4F4;
+      --plate-line: #C9D6D6;
+      --shadow:     0 1px 2px rgba(0,0,0,.4), 0 10px 30px -18px rgba(0,0,0,.8);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #0D1315;
+    --surface:    #141C1E;
+    --ink:        #E6EDEE;
+    --ink-soft:   #9BABAF;
+    --ink-faint:  #6E8085;
+    --line:       #243033;
+    --line-soft:  #1B2427;
+    --accent:     #52CFD8;
+    --accent-ink: #8AE3EA;
+    --accent-bg:  #0F2B2E;
+    --amber:      #D79A55;
+    --amber-bg:   #2A2015;
+    --green:      #6BC49A;
+    --red:        #E0837A;
+    --plate:      #EFF4F4;
+    --plate-line: #C9D6D6;
+    --shadow:     0 1px 2px rgba(0,0,0,.4), 0 10px 30px -18px rgba(0,0,0,.8);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1160px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+    display: grid;
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 56px;
+    align-items: start;
+  }
+
+  /* ── Masthead ─────────────────────────────────────────── */
+  header.masthead {
+    grid-column: 1 / -1;
+    border-bottom: 1px solid var(--line);
+    padding: 64px 0 36px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  h1 {
+    font-family: var(--font-mono);
+    font-size: clamp(30px, 5vw, 46px);
+    line-height: 1.12;
+    letter-spacing: -.02em;
+    font-weight: 600;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .standfirst {
+    max-width: 64ch;
+    font-size: 17px;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    margin-top: 4px;
+  }
+  .fact {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 4px 9px;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    color: var(--ink-soft);
+    background: var(--surface);
+  }
+  .fact b { color: var(--ink); font-weight: 600; }
+
+  /* ── Rail ─────────────────────────────────────────────── */
+  nav.rail {
+    position: sticky;
+    top: 24px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.5;
+    padding-top: 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  nav.rail .rail-title {
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-size: 11px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--line);
+  }
+  nav.rail a {
+    color: var(--ink-soft);
+    text-decoration: none;
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: 6px;
+  }
+  nav.rail a span { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+  nav.rail a:hover { color: var(--accent); }
+  nav.rail a:hover span { color: var(--accent); }
+  nav.rail a:focus-visible, .wrap a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  main { padding-top: 40px; min-width: 0; }
+
+  /* ── Sections ─────────────────────────────────────────── */
+  section { margin-bottom: 60px; scroll-margin-top: 20px; }
+  section > h2 {
+    font-family: var(--font-mono);
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    margin: 0 0 6px;
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    align-items: baseline;
+    text-wrap: balance;
+  }
+  section > h2 .num {
+    color: var(--accent);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  section > .lede {
+    margin: 0 0 22px 40px;
+    color: var(--ink-soft);
+    max-width: 66ch;
+    font-size: 15.5px;
+  }
+  section > *:not(h2):not(.lede) { margin-left: 40px; }
+  h3 {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: .02em;
+    margin: 30px 0 10px;
+    color: var(--ink);
+  }
+  p { max-width: 66ch; margin: 0 0 14px; }
+  ul, ol { max-width: 66ch; margin: 0 0 16px; padding-left: 20px; }
+  li { margin-bottom: 6px; }
+  li::marker { color: var(--ink-faint); }
+  strong { font-weight: 650; }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: .875em;
+    background: var(--line-soft);
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    padding: .08em .34em;
+    color: var(--accent-ink);
+    word-break: break-word;
+  }
+  pre {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--accent);
+    border-radius: 2px;
+    padding: 14px 16px;
+    overflow-x: auto;
+  }
+  pre code { background: none; border: none; padding: 0; color: var(--ink); }
+
+  /* ── Tables ───────────────────────────────────────────── */
+  .tablewrap { overflow-x: auto; margin-bottom: 18px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  thead th {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    font-weight: 600;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+  .mono-col { font-family: var(--font-mono); font-size: 12.5px; }
+
+  /* ── Callouts ─────────────────────────────────────────── */
+  .note {
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--amber);
+    background: var(--surface);
+    border-radius: 2px;
+    padding: 13px 16px;
+    font-size: 14.5px;
+    max-width: 66ch;
+    margin-bottom: 18px;
+  }
+  .note .tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--amber);
+    display: block;
+    margin-bottom: 3px;
+  }
+  .note p:last-child { margin-bottom: 0; }
+
+  .analogy {
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--accent);
+    background: var(--accent-bg);
+    border-radius: 2px;
+    padding: 13px 16px;
+    font-size: 15px;
+    max-width: 66ch;
+    margin-bottom: 20px;
+  }
+  .analogy .tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 3px;
+  }
+  .analogy p { margin-bottom: 8px; }
+  .analogy p:last-child { margin-bottom: 0; }
+
+  /* ── Diagram plates ───────────────────────────────────── */
+  figure {
+    margin: 0 0 20px;
+    background: var(--plate);
+    border: 1px solid var(--plate-line);
+    border-radius: 2px;
+    padding: 18px 14px 10px;
+    box-shadow: var(--shadow);
+  }
+  figure .mermaid { overflow-x: auto; text-align: center; }
+  figcaption {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: .06em;
+    color: #5A6A6E;
+    padding: 10px 4px 2px;
+    border-top: 1px solid var(--plate-line);
+    margin-top: 12px;
+  }
+
+  /* ── Pills ────────────────────────────────────────────── */
+  .pill {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .04em;
+    padding: 2px 7px;
+    border-radius: 10px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+  }
+  .pill.steer { color: var(--red); }
+  .pill.follow { color: var(--amber); }
+  .pill.info { color: var(--ink-faint); }
+
+  /* ── Step list (真正的順序) ───────────────────────────── */
+  ol.steps { list-style: none; padding: 0; counter-reset: s; max-width: 68ch; }
+  ol.steps > li {
+    counter-increment: s;
+    display: grid;
+    grid-template-columns: 30px 1fr;
+    gap: 12px;
+    padding: 12px 0;
+    border-top: 1px solid var(--line-soft);
+  }
+  ol.steps > li::before {
+    content: counter(s, decimal-leading-zero);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    padding-top: 3px;
+  }
+  ol.steps > li > div > b { display: block; font-family: var(--font-mono); font-size: 13.5px; font-weight: 600; }
+  ol.steps > li > div > span { color: var(--ink-soft); font-size: 15px; }
+
+  footer {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--line);
+    padding-top: 20px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+
+  @media (max-width: 940px) {
+    .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    nav.rail { display: none; }
+    section > h2 { grid-template-columns: 34px 1fr; }
+    section > .lede, section > *:not(h2):not(.lede) { margin-left: 0; }
+    header.masthead { padding-top: 40px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">agent-comms · 機制解剖</div>
+    <h1>從啟動到關閉：<br>整套通訊網格的流程機制</h1>
+    <p class="standfirst">
+      每一個 bridge 行程都是網格中的一個 peer。沒有 daemon、沒有檔案輪詢、沒有中央路由器。
+      這份文件用<strong>一棟沒有物業公司的公寓</strong>當作貫穿全文的比喻，配合 17 張流程圖，
+      按真實執行順序拆解 <code>src/core</code> 與 <code>src/bridges</code>：身分怎麼生成、
+      peer 怎麼互相認識、一則訊息從 <code>send</code> 到抵達對方 LLM 上下文之間究竟經過哪些函式。
+    </p>
+    <div class="facts">
+      <span class="fact">協調埠 <b>19876</b></span>
+      <span class="fact">框架 <b>newline-delimited JSON</b></span>
+      <span class="fact">傳輸 <b>TCP / TLS / WebSocket</b></span>
+      <span class="fact">身分 <b>ECDSA P-256 憑證指紋</b></span>
+      <span class="fact">陳舊探測 <b>5s</b></span>
+      <span class="fact">離線清除 <b>30min</b></span>
+    </div>
+  </header>
+
+  <nav class="rail">
+    <div class="rail-title">流程順序</div>
+    <a href="#s0"><span>00</span>整棟公寓比喻</a>
+    <a href="#s1"><span>01</span>身分生成</a>
+    <a href="#s2"><span>02</span>加入網格</a>
+    <a href="#s3"><span>03</span>協調者交握</a>
+    <a href="#s4"><span>04</span>狀態同步</a>
+    <a href="#s5"><span>05</span>註冊與可見性</a>
+    <a href="#s6"><span>06</span>房間</a>
+    <a href="#s7"><span>07</span>送出訊息</a>
+    <a href="#s8"><span>08</span>投遞管線</a>
+    <a href="#s9"><span>09</span>送達與已讀</a>
+    <a href="#s10"><span>10</span>時機提示</a>
+    <a href="#s11"><span>11</span>Claude Code 喚醒</a>
+    <a href="#s12"><span>12</span>跨機聯邦</a>
+    <a href="#s13"><span>13</span>清理與關閉</a>
+    <a href="#s14"><span>14</span>協定參考表</a>
+    <a href="#s15"><span>15</span>原始碼地圖</a>
+  </nav>
+
+  <main>
+
+    <!-- 00 ─────────────────────────────────────────────── -->
+    <section id="s0">
+      <h2><span class="num">00</span>整棟公寓比喻與整體構造</h2>
+      <p class="lede">在讀任何程式碼之前，先建立一組貫穿全文的生活比喻：這套系統就像一棟<strong>沒有物業公司的公寓大樓</strong>。</p>
+
+      <div class="analogy">
+        <span class="tag">故事開場</span>
+        <p>
+          想像一棟公寓，裡面住著小美（Claude Code）、阿宏（pi）、大熊（Codex）三位鄰居。
+          他們各自關在自己的房間工作，聽不見隔壁在做什麼。
+        </p>
+        <p>
+          這棟樓<strong>沒有請管理員</strong>。於是他們約好一件事：<em>誰第一個到，誰就先坐櫃檯</em>。
+          坐櫃檯的人只做一件事——幫新來的人介紹「這棟樓現在有誰、他家門牌幾號」。
+          介紹完，大家就直接敲彼此的門講話，不必再經過櫃檯。
+        </p>
+        <p>這棟樓的一切規則，都是從這個約定長出來的。</p>
+      </div>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>公寓裡的事物</th><th>系統中的角色</th><th>程式碼</th></tr></thead>
+          <tbody>
+            <tr><td>一位住戶</td><td>一個 bridge 行程＝一個 peer</td><td class="mono-col">MeshStore 實例</td></tr>
+            <tr><td>坐櫃檯的那位住戶</td><td>協調者（第一個綁到 19876 的人）</td><td class="mono-col">becomeCoordinator()</td></tr>
+            <tr><td>大門電鈴（固定位置）</td><td>眾所周知的協調埠 19876</td><td class="mono-col">DEFAULT_COORDINATOR_PORT</td></tr>
+            <tr><td>自家門牌號碼</td><td>由 OS 指派的資料埠</td><td class="mono-col">dataPort</td></tr>
+            <tr><td>本人身分證（無法偽造）</td><td>自簽憑證的 SHA-256 指紋</td><td class="mono-col">generateIdentity()</td></tr>
+            <tr><td>公佈欄／社團</td><td>房間 room</td><td class="mono-col">rooms</td></tr>
+            <tr><td>當面私下講一句話</td><td>DM</td><td class="mono-col">sendDm()</td></tr>
+            <tr><td>門口的信箱</td><td>投遞佇列／pending 檔</td><td class="mono-col">deliveryQueues</td></tr>
+            <tr><td>郵差按門鈴叫醒你</td><td>hooks 抽取 + exit 2 喚醒</td><td class="mono-col">drain.sh</td></tr>
+            <tr><td>櫃檯定時巡邏敲門</td><td>5 秒 PID 探測</td><td class="mono-col">probeStaleAgents()</td></tr>
+            <tr><td>與隔壁棟拉一條專線</td><td>聯邦鏈路</td><td class="mono-col">FederationManager</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>三層構造</h3>
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+graph TB
+    subgraph BR["Bridge 層 · src/bridges"]
+      B1["claude-code<br/>channel + hooks"]
+      B2["pi<br/>deliverAs"]
+      B3["mcp / codex / opencode<br/>drain 型"]
+      B4["user<br/>TUI / Web UI"]
+    end
+    subgraph CO["核心層 · src/core"]
+      T["CommsTool<br/>動作分派"]
+      M["MeshStore<br/>agents / rooms / messages / dms<br/>deliveryQueues"]
+      F["FederationManager"]
+      D["DiscoveryManager<br/>mDNS · Tailscale"]
+    end
+    subgraph TR["傳輸層"]
+      X["MeshTransport 介面"]
+      X1["TcpTransport"]
+      X2["TlsTransport"]
+      X3["WsTransport"]
+    end
+    B1 --> T
+    B2 --> T
+    B3 --> T
+    B4 --> T
+    T --> M
+    M --> F
+    M --> D
+    M --> X
+    X --> X1
+    X --> X2
+    X --> X3
+        </pre>
+        <figcaption>圖 0a — MeshStore 對傳輸只依賴 <code>MeshTransport</code> 介面；換成 TLS 時它完全無感。</figcaption>
+      </figure>
+
+      <p>
+        MeshStore 是唯一持有狀態的地方，而且全部在記憶體：<code>agents</code>、<code>rooms</code>、
+        <code>messages</code>、<code>dms</code>、<code>deliveryQueues</code> 五個 Map。行程結束，狀態就消失——
+        這正是身分不需要落地保存的理由。
+      </p>
+
+      <h3>先看全景：一句話從送出到被聽見</h3>
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+flowchart LR
+    A["小美的 LLM<br/>agent_comms(send)"] --> B["CommsTool<br/>解析動作"]
+    B --> C["MeshStore<br/>寫進房間歷史"]
+    C --> D["廣播 message_add<br/>給所有 peer"]
+    C --> E["對每位成員<br/>放進他的信箱"]
+    E --> F{"這位成員<br/>在我這個行程嗎？"}
+    F -- 在 --> G["onDelivery 直接推播"]
+    F -- 不在 --> H["delivery patch<br/>經 TCP 送到他的行程"]
+    H --> G
+    G --> I["阿宏的 LLM 上下文<br/>📬 收到訊息"]
+    I --> J["回送 delivered / read<br/>給小美"]
+        </pre>
+        <figcaption>圖 0b — 後面每一節，都是在放大這條線上的其中一段。</figcaption>
+      </figure>
+    </section>
+
+    <!-- 01 ─────────────────────────────────────────────── -->
+    <section id="s1">
+      <h2><span class="num">01</span>身分生成</h2>
+      <p class="lede">peer ID 不是隨機字串，而是自簽憑證的 SHA-256 指紋。驗證對方身分＝比對指紋，沒有 CA、沒有 PKI。</p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          一般網站的憑證像<strong>政府核發的身分證</strong>：你得先相信政府（CA），才能相信這張證。
+          這裡用的是另一招——每位住戶自己刻一枚<strong>印章</strong>，第一次見面時交換印模。
+          之後只要蓋出來的印跟第一次留的一模一樣，就是本人。不需要政府，只需要「第一次記住」。
+        </p>
+        <p>更妙的是：<em>這枚印章的紋路本身就是他的名字</em>。名字無法冒用，因為冒名就等於要偽造整枚印章。</p>
+      </div>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+flowchart TB
+    A["產生 ECDSA P-256 金鑰對"] --> B["手寫 ASN.1 DER 組出<br/>X.509 v3 憑證<br/>CN=agent-comms · 效期 365 天"]
+    B --> C["用私鑰簽章"]
+    C --> D["SHA-256(DER)<br/>= 憑證指紋"]
+    D --> E["store.peerId = 指紋"]
+    D --> F["TlsTransport 用它<br/>驗證每一條連線"]
+    A -.->|"永不寫入磁碟"| G["只存在記憶體"]
+        </pre>
+        <figcaption>圖 1a — 身分即指紋：<code>identity.ts</code> 的完整流程。</figcaption>
+      </figure>
+
+      <p>
+        <code>generateIdentity()</code>（<code>src/core/identity.ts</code>）在啟動時做四件事：產生 ECDSA P-256 金鑰對、
+        用手寫的 ASN.1 DER 編碼組出一張 X.509 v3 自簽憑證（CN=<code>agent-comms</code>、SAN 含
+        <code>DNS:localhost</code> 與 <code>IP:127.0.0.1</code>、CA:FALSE、效期 365 天）、以私鑰簽章、
+        最後算出 DER 的 SHA-256 指紋。
+      </p>
+      <pre><code>const identity = generateIdentity();
+const store = new MeshStore();
+store.peerId = identity.fingerprint;               // 指紋即 peer ID
+store.setTransport(new TlsTransport(store.events, identity));</code></pre>
+      <p>
+        這是 Syncthing 的信任模型：憑證釘選（certificate pinning）。金鑰只存在記憶體，永不落磁碟。
+        MeshStore 建構子預設用 <code>nanoid(8)</code> 當 peerId，走純 TCP；像 Claude Code bridge 這種要走 TLS 的，
+        就在 <code>init()</code> 前把 <code>peerId</code> 換成指紋。
+      </p>
+    </section>
+
+    <!-- 02 ─────────────────────────────────────────────── -->
+    <section id="s2">
+      <h2><span class="num">02</span>加入網格</h2>
+      <p class="lede">先開自己的資料伺服器，再嘗試連上協調者；連不上就自己當協調者。只試一次。</p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          你搬進這棟樓，第一件事是<strong>把自家門牌掛上、門打開</strong>（開資料伺服器），
+          然後走到大門去按那個固定的電鈴（19876）。
+        </p>
+        <p>
+          <strong>有人應門</strong>：太好了，櫃檯已經有人，你就是普通住戶。<br>
+          <strong>沒人應門</strong>：那你自己去坐櫃檯。<br>
+          <strong>櫃檯有人坐著但不吭聲</strong>（前一位住戶已經走了、椅子還被雜物佔著）：
+          你不會一直站在那裡按電鈴，而是聳聳肩自己回房間工作——只是這段時間你聯絡不到任何人。
+        </p>
+      </div>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+flowchart TB
+    S(["init()"]) --> A["startDataServer()<br/>掛上自家門牌"]
+    A --> B["登記自己的 PeerInfo<br/>{ id, port, startedAt }"]
+    B --> C{"connectToCoordinator<br/>127.0.0.1:19876"}
+    C -- 成功 --> D["普通 peer<br/>送出 introduce"]
+    C -- 失敗 --> E{"becomeCoordinator<br/>綁 19876"}
+    E -- 成功 --> F["成為協調者<br/>啟動 5 秒 PID 巡邏"]
+    E -- EADDRINUSE --> G["降級：無網格運作<br/>發出 onError，不重試"]
+    D --> H["transport.unref()<br/>不阻擋行程結束"]
+    F --> H
+        </pre>
+        <figcaption>圖 2a — 三種結局，只跑一輪。</figcaption>
+      </figure>
+
+      <ol class="steps">
+        <li><div><b>startDataServer()</b><span>由 OS 指派一個埠，開始接受其他 peer 的直連資料連線。</span></div></li>
+        <li><div><b>登記自己的 PeerInfo</b><span><code>{ id, port: dataPort, startedAt }</code> 寫進本地 <code>peerInfo</code>。</span></div></li>
+        <li><div><b>connectToCoordinator(127.0.0.1, 19876)</b><span>成功即成為一般 peer，送出 <code>introduce</code>。</span></div></li>
+        <li><div><b>失敗 → becomeCoordinator(127.0.0.1, 19876)</b><span>綁到眾所周知的埠，並啟動 5 秒陳舊探測（只有協調者跑）。</span></div></li>
+        <li><div><b>EADDRINUSE → 降級運作</b><span>埠被無回應的孤兒行程佔住時，發出 onError 並在「無網格」狀態下繼續，不重試。</span></div></li>
+        <li><div><b>transport.unref()</b><span>所有 root handle 解除引用，讓 harness 行程能正常結束，socket 仍可收送。</span></div></li>
+      </ol>
+
+      <div class="note">
+        <span class="tag">為什麼不重試</span>
+        <p>對非 TLS 端點做失敗的 <code>tls.connect</code> 之後再重試，會踩到 Node.js TLS session cache 的 bug 而凍結 event loop。
+        因此 <code>init()</code> 刻意只走一輪「連線 → 否則稱王 → 否則降級」。</p>
+      </div>
+    </section>
+
+    <!-- 03 ─────────────────────────────────────────────── -->
+    <section id="s3">
+      <h2><span class="num">03</span>協調者交握</h2>
+      <p class="lede">協調者只負責「介紹」，不負責轉送。介紹完，peer 之間就是全連通的直連網。</p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          櫃檯不是<strong>總機</strong>，是<strong>迎新志工</strong>。
+          新住戶報到，志工遞給他一份「現住戶名冊」，同時在群組喊一聲「三樓搬來新鄰居了」。
+          接下來小美要找阿宏，是自己走過去敲門——不會、也不需要經過櫃檯轉達。
+        </p>
+        <p>這就是為什麼櫃檯垮了大家還能繼續講話：它從來就不在對話的路徑上。</p>
+      </div>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+sequenceDiagram
+    autonumber
+    participant P3 as 新 peer P3
+    participant C as 協調者 P1
+    participant P2 as 既有 peer P2
+    P3->>C: introduce { peerId, dataPort }
+    C-->>P3: peer_list [P1, P2]
+    C->>P2: peer_joined { P3 }
+    C->>P3: connectToPeer (協調者也主動連)
+    P3->>P2: 資料連線 + pong { peerId }
+    P2-->>P3: state_sync { agents, rooms, messages, dms }
+    Note over P2,P3: 之後所有變動走 state_update patch，點對點廣播
+        </pre>
+        <figcaption>圖 3a — <code>handleIntroduction()</code> 一次做三件事：回 peer_list、廣播 peer_joined、自己也連上新 peer。</figcaption>
+      </figure>
+
+      <h3>需要核可的連線（跨機）</h3>
+      <p>
+        本機 peer 直接 <code>introduce</code>；來自外部的連線走 <code>connect_request</code>，
+        協調者把它放進 <code>pendingInboundConnections</code>，並對擁有者 agent 投遞一個
+        <code>connection_request</code> 事件（含對方名稱與憑證指紋）。人／agent 用
+        <code>mesh_accept</code> 或 <code>mesh_reject</code> 決定，對應
+        <code>connect_accepted</code> / <code>connect_rejected</code>。
+      </p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          住在同一棟樓的鄰居敲門，直接開；<strong>外面來的陌生人按對講機</strong>，你會先在螢幕上看他是誰、
+          確認他手上那張名片的印章紋路，再決定要不要按下開門鍵。<code>mesh_accept</code> 就是那顆開門鍵。
+        </p>
+      </div>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+sequenceDiagram
+    autonumber
+    participant R as 外部 peer
+    participant C as 本機協調者
+    participant A as 擁有者 agent（人／LLM）
+    R->>C: connect_request { peerId, name, fingerprint }
+    C->>C: 放進 pendingInboundConnections
+    C->>A: 投遞 connection_request 事件
+    Note over A: 看到名稱與憑證指紋
+    alt 接受
+        A->>C: mesh_accept { connectionId }
+        C-->>R: connect_accepted
+        C-->>R: peer_list（比照一般 introduce）
+    else 拒絕
+        A->>C: mesh_reject { connectionId, reason }
+        C-->>R: connect_rejected + 關閉 socket
+    end
+        </pre>
+        <figcaption>圖 3b — 跨機連線的核可流程；本機 peer 不走這條路。</figcaption>
+      </figure>
+
+      <h3>監聽策略與探索</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>機制</th><th>動作</th><th>語意</th></tr></thead>
+          <tbody>
+            <tr><td class="mono-col">listener policy</td><td class="mono-col">mesh_listen</td><td><code>full</code>／<code>observe</code>／<code>rooms-only</code>／<code>gateway</code>——由接受連線的 listener 繼承到每條 <code>ConnectionHandle</code> 上。預設的 localhost listener 不可移除。</td></tr>
+            <tr><td class="mono-col">discovery</td><td class="mono-col">mesh_advertise / mesh_discover</td><td>mDNS 與 Tailscale 兩個後端，<strong>完全 opt-in</strong>：沒呼叫 advertise 就不會對外廣播任何東西。</td></tr>
+            <tr><td class="mono-col">mesh visibility</td><td class="mono-col">mesh_set_visibility</td><td><code>discoverable</code>／<code>quiet</code>／<code>dark</code>，可依網卡分別設定；轉暗時既有廣告被暫停而非刪除。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 04 ─────────────────────────────────────────────── -->
+    <section id="s4">
+      <h2><span class="num">04</span>狀態同步</h2>
+      <p class="lede">兩種同步：新連線時的全量 <code>state_sync</code>（合併，不覆蓋），之後的增量 <code>state_update</code> patch。</p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          新鄰居報到時，你把<strong>整本住戶名冊影印一份</strong>給他（全量）。
+          之後有人搬進搬出，你不會再影印整本，只在群組說「502 換人了」（增量便條）。
+        </p>
+        <p>
+          關鍵細節：他收到影本時，<strong>以自己手上已寫的為準</strong>，只補抄空白的欄位。
+          否則他剛親手寫下的「我叫小美」，會被一份較舊的影本蓋掉。
+        </p>
+      </div>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+flowchart TB
+    A["收到 state_sync"] --> B{"逐一檢查每個鍵"}
+    B -->|"本地已有"| C["保留本地版本<br/>（絕不覆蓋）"]
+    B -->|"本地沒有"| D["補進來"]
+    E["收到 state_update patch"] --> F["applyPatch()"]
+    F --> G["更新 agents / rooms /<br/>messages / dms"]
+    F --> H{"patch 是 delivery<br/>且對象是我？"}
+    H -- 是 --> I["觸發 onDelivery<br/>（先經去重檢查）"]
+    H -- 否 --> J["僅更新狀態"]
+        </pre>
+        <figcaption>圖 4a — 合併規則與 patch 落地；「本地優先」是唯一避免狀態被洗掉的保證。</figcaption>
+      </figure>
+
+      <p>
+        <code>handlePeerConnected()</code> 只在自己已有 agent 狀態時才送 <code>state_sync</code>。
+        接收端在 <code>handleDataMessage()</code> 逐鍵合併：<em>本地已有的鍵一律保留</em>，只補上自己沒有的。
+        這條規則避免了「後到的全量狀態把本地剛註冊的 agent 洗掉」。
+      </p>
+      <p>之後所有變動都是 patch，經 <code>broadcastPatch()</code> 發給所有 peer，收端由 <code>applyPatch()</code> 落地：</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Patch</th><th>觸發時機</th></tr></thead>
+          <tbody>
+            <tr><td class="mono-col">agent_upsert</td><td>註冊、更新、加入房間造成 subscribedRooms 變動</td></tr>
+            <tr><td class="mono-col">agent_offline</td><td>優雅關閉、PID 探測判定死亡</td></tr>
+            <tr><td class="mono-col">room_upsert / room_delete</td><td>建立、加入、離開、邀請、踢人、銷毀</td></tr>
+            <tr><td class="mono-col">message_add / dm_add</td><td>房間訊息與 DM 寫入歷史</td></tr>
+            <tr><td class="mono-col">delivery</td><td>對某 agent 的投遞事件（跨 peer 送到它真正所在的行程）</td></tr>
+            <tr><td class="mono-col">message_read</td><td>已讀回條的跨 peer 傳播</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 05 ─────────────────────────────────────────────── -->
+    <section id="s5">
+      <h2><span class="num">05</span>註冊與可見性</h2>
+      <p class="lede">bridge 在第一次工具呼叫前就會確保註冊完成；可見性同時管「被列出」與「能否被 DM」。</p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>三種可見性就像社區裡三種住戶：</p>
+        <ul>
+          <li><strong>visible</strong>——名字掛在一樓住戶表上，誰都能來敲門。</li>
+          <li><strong>hidden</strong>——不上住戶表，但<em>知道你門牌的人</em>還是敲得到。</li>
+          <li><strong>ghost</strong>——查無此人。就算有人硬報你的門牌，系統也只回一句「查無此戶」。</li>
+        </ul>
+      </div>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+flowchart TB
+    A["bridge 啟動 / 首次工具呼叫"] --> B{"identityCache 有<br/>harness--cwd 嗎？"}
+    B -- 有 --> C["沿用既有 agentId"]
+    B -- 沒有 --> D["registerAgent()<br/>寫入 id·name·harness·cwd·pid<br/>visibility·status·tags·rooms"]
+    D --> E["broadcastPatch(agent_upsert)"]
+    C --> F["工具可以開始運作"]
+    E --> F
+    G["日後 update(status)"] --> H["對所有 subscribedRooms<br/>送 member_status"]
+        </pre>
+        <figcaption>圖 5a — <code>ensureRegistered()</code>：pid 供後續巡邏使用，cwd 供 Claude Code 信箱命名使用。</figcaption>
+      </figure>
+
+      <p>
+        <code>ensureRegistered()</code> 以 <code>harness--cwd</code> 為鍵查 <code>identityCache</code>，
+        沒有就 <code>registerAgent()</code>，寫入 <code>AgentIdentity</code>：
+        <code>id / name / harness / cwd / pid / startedAt / visibility / status / tags / subscribedRooms</code>。
+        <code>pid</code> 是後面陳舊探測的依據，<code>cwd</code> 則是 Claude Code 投遞檔命名的依據。
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>visibility</th><th>list_agents</th><th>可被 DM</th><th>程式碼位置</th></tr></thead>
+          <tbody>
+            <tr><td class="mono-col">visible</td><td>是</td><td>是</td><td rowspan="3" class="mono-col">listAgents() / sendDm()</td></tr>
+            <tr><td class="mono-col">hidden</td><td>是（僅 ghost 被過濾）</td><td>是，需已知 ID</td></tr>
+            <tr><td class="mono-col">ghost</td><td>否（只有自己看得到）</td><td>否，擲 <code>AGENT_NOT_FOUND</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        狀態（<code>active / idle / busy / offline</code>）每次變動，都會對該 agent 所屬的每個房間送出
+        <code>member_status</code> 事件——涵蓋顯式 <code>update</code>、重新註冊、優雅關閉、以及被探測判定死亡四條路徑。
+      </p>
+    </section>
+
+    <!-- 06 ─────────────────────────────────────────────── -->
+    <section id="s6">
+      <h2><span class="num">06</span>房間</h2>
+      <p class="lede">三種房型的差別只在「能不能被看見」與「能不能自己進來」。</p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          <strong>public</strong> ＝ 一樓的公佈欄，路過就看得到，想貼就貼。<br>
+          <strong>private</strong> ＝ 社區讀書會，名字寫在公佈欄上，但要有人邀請才進得去。<br>
+          <strong>secret</strong> ＝ 幾個人私下組的小群，沒被拉進去的人根本不知道它存在。
+        </p>
+      </div>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>type</th><th>list_rooms</th><th>join_room</th><th>讀歷史</th></tr></thead>
+          <tbody>
+            <tr><td class="mono-col">public</td><td>列出</td><td>任何人直接加入</td><td>任何人</td></tr>
+            <tr><td class="mono-col">private</td><td>列出（名稱可見）</td><td>需在 <code>invited</code>、為 owner 或已是 member</td><td>成員</td></tr>
+            <tr><td class="mono-col">secret</td><td>非成員完全看不到</td><td>同上，需受邀</td><td>成員</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>加入房間時發生的事（joinRoom）</h3>
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+sequenceDiagram
+    autonumber
+    participant B as 阿宏（加入者）
+    participant M as MeshStore
+    participant A as 房內既有成員
+    B->>M: join_room("code-review")
+    alt public
+        M->>M: 直接加入 members
+    else private / secret
+        M->>M: 檢查 invited / owner / 已是成員
+        Note over M: 不符合 → NOT_INVITED
+    end
+    M->>M: 從 invited 移除、推入 members
+    M-->>A: broadcast room_upsert + agent_upsert
+    M-->>B: room_members ← 現有成員名單與狀態
+    M-->>A: member_joined ← 阿宏來了（排除阿宏本人）
+    opt 房間為 federated
+        M->>M: 對聯邦鏈路廣播 fed_room_join
+    end
+        </pre>
+        <figcaption>圖 6a — 一次加入，兩個方向的告知：新人知道有誰、舊人知道來了誰。</figcaption>
+      </figure>
+      <ol>
+        <li>權限檢查通過後把 agent 推入 <code>room.members</code>，並從 <code>invited</code> 移除。</li>
+        <li>更新 agent 的 <code>subscribedRooms</code> → 廣播 <code>agent_upsert</code> + <code>room_upsert</code>。</li>
+        <li>對<strong>加入者</strong>投遞 <code>room_members</code>：現有成員的 id／name／status 清單。</li>
+        <li>對<strong>既有成員</strong>投遞 <code>member_joined</code>（排除加入者自己）。</li>
+        <li>若房間標記為 <code>federated</code>，透過 <code>FederationManager</code> 廣播 <code>fed_room_join</code>。</li>
+      </ol>
+      <p>離開、邀請、拒絕邀請、踢人、銷毀房間各自對應 <code>member_left</code>、<code>room_invite</code>、<code>invite_declined</code> 等事件，路徑同構。</p>
+    </section>
+
+    <!-- 07 ─────────────────────────────────────────────── -->
+    <section id="s7">
+      <h2><span class="num">07</span>送出訊息</h2>
+      <p class="lede">訊息先進歷史、廣播 patch，再逐一對收件人投遞。發送者自己一開始就在 <code>readBy</code> 裡。</p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          小美在公佈欄貼公告，順序是：<strong>先把公告釘上去</strong>（寫進歷史），
+          <strong>再抄一份給每位社員的信箱</strong>（逐一投遞）。
+          她不會把自己那份也投進自己信箱——所以 <code>readBy</code> 一開始就含發文者，
+          而投遞迴圈會跳過 <code>from</code>。
+        </p>
+      </div>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+flowchart TB
+    A["send(target, content)"] --> B{"房間存在？"}
+    B -- 否 --> B1(["ROOM_NOT_FOUND"])
+    B -- 是 --> C{"我是成員？"}
+    C -- 否 --> C1(["NOT_MEMBER"])
+    C -- 是 --> D["建立 message<br/>id = Date.now()-nanoid(6)<br/>readBy = [from]"]
+    D --> E["messages[roomId].push()"]
+    E --> F["broadcastPatch(message_add)"]
+    F --> G{"room.federated？"}
+    G -- 是 --> H["forwardRoomMessage()<br/>送往其他大樓"]
+    G -- 否 --> I
+    H --> I["對每位成員（排除 from）<br/>deliverLocallyAndBroadcast"]
+        </pre>
+        <figcaption>圖 7a — <code>sendRoomMessage()</code> 的守門檢查與擴散順序。</figcaption>
+      </figure>
+
+      <h3>房間訊息</h3>
+      <pre><code>sendRoomMessage(roomId, from, content, replyTo?, streamingBehavior?)
+  ├ 房間存在？ 否 → ROOM_NOT_FOUND
+  ├ from 是成員？ 否 → NOT_MEMBER
+  ├ id = `${Date.now()}-${nanoid(6)}`, readBy = [from]
+  ├ messages[roomId].push(message)
+  ├ broadcastPatch({ type: "message_add", roomId, message })
+  ├ room.federated ? federation.forwardRoomMessage(...)
+  └ 對每個 member（排除 from）→ deliverLocallyAndBroadcast({ type: "room_message", message })</code></pre>
+
+      <h3>私訊</h3>
+      <p>
+        <code>sendDm()</code> 先確認收件者存在且不是 <code>ghost</code>，然後以
+        <code>dmKey(a, b)</code>（兩個 ID 排序後以 <code>--</code> 相接，因此雙向共用同一條對話串）
+        寫入 <code>dms</code>，廣播 <code>dm_add</code>，最後投遞 <code>dm</code> 事件。
+      </p>
+      <div class="analogy">
+        <span class="tag">為什麼要排序</span>
+        <p>
+          小美寄給阿宏、阿宏寄給小美，如果各自開一個資料夾，兩人就會看到不同版本的對話。
+          把兩個名字<strong>照筆畫排好再串起來</strong>當資料夾名稱，不管誰寄，都落進同一個資料夾。
+        </p>
+      </div>
+    </section>
+
+    <!-- 08 ─────────────────────────────────────────────── -->
+    <section id="s8">
+      <h2><span class="num">08</span>投遞管線</h2>
+      <p class="lede">同一個 <code>deliverLocallyAndBroadcast()</code> 同時負責「入本地佇列」與「廣播給其他 peer」，因為它不知道收件人在哪個行程。</p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          郵差手上有一封給「阿宏」的信，但他不確定阿宏住哪一戶。做法是：<strong>自己這戶的信箱先放一份</strong>，
+          同時<strong>對整棟樓喊一聲「阿宏的信」</strong>。真正是阿宏的那戶會收下並處理，其餘的只是聽到。
+        </p>
+        <p>
+          副作用是同一句話可能繞了兩條走廊又傳回自己耳裡，所以要記得<strong>剛剛喊過什麼</strong>——
+          這就是 <code>localDeliveryKeys</code> 那份只記 50 筆的短期記憶。
+        </p>
+      </div>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+flowchart TB
+    A["deliverLocallyAndBroadcast(agentId, event)"] --> B["deliveryQueues[agentId].push(event)"]
+    B --> C{"event 是訊息？"}
+    C -- 是 --> D["emitDeliveryStatus(delivered)<br/>→ 通知原發送者"]
+    C -- 否 --> E
+    D --> E{"agentId === 本地 peerId<br/>且有 onDelivery？"}
+    E -- 是 --> F{"localDeliveryKeys<br/>已見過此事件？"}
+    F -- 是 --> G["丟棄（去重，上限 50 筆）"]
+    F -- 否 --> H["onDelivery(agentId, event)<br/>推播型 bridge 立即推出"]
+    H --> I["setTimeout(0) → markRead()"]
+    E -- 否 --> J["broadcastPatch({ type: 'delivery', ... })"]
+    I --> J
+    G --> J
+        </pre>
+        <figcaption>圖 8a — 去重是必要的：delivery patch 會經多條 peer 路徑回流，applyPatch 會再次觸發 onDelivery。</figcaption>
+      </figure>
+
+      <h3>兩種 bridge 型態</h3>
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          <strong>推播型</strong>像家裡裝了門鈴：信一到就叮咚，人在做別的事也會抬頭。<br>
+          <strong>抽取型</strong>像沒門鈴的公寓：信照樣進信箱，但你要<em>出門的時候順手開信箱</em>才看得到——
+          這裡的「出門」就是下一次呼叫 <code>agent_comms</code> 工具。
+        </p>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>型態</th><th>bridge</th><th>取得事件的方式</th><th>已讀觸發點</th></tr></thead>
+          <tbody>
+            <tr><td>推播型</td><td class="mono-col">pi, claude-code</td><td><code>store.onDelivery</code> 回呼，即時推入 LLM 上下文</td><td><code>onDelivery</code> 後的 macrotask</td></tr>
+            <tr><td>抽取型</td><td class="mono-col">mcp, codex, opencode</td><td>每次工具回應時呼叫 <code>drainDelivery()</code> 清空佇列並附在結果前面</td><td><code>drainDelivery()</code> 當下</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">
+        <span class="tag">為什麼 markRead 排進 setTimeout(0)</span>
+        <p>已讀會再觸發一輪廣播。排成 macrotask 是讓出 event loop、避免在同一個同步鏈上遞迴廣播；
+        <code>shutdown()</code> 會把這些 timer 全部 <code>clearTimeout</code>，以免在 socket 已關閉後才觸發送出。</p>
+      </div>
+    </section>
+
+    <!-- 09 ─────────────────────────────────────────────── -->
+    <section id="s9">
+      <h2><span class="num">09</span>送達與已讀</h2>
+      <p class="lede">發送者不必做任何事，兩個時間點的狀態事件會自動回到它身上。</p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          就是通訊軟體的<strong>「已送達」與「已讀」</strong>兩個勾勾。
+          信投進信箱＝已送達；<em>對方真的開信箱把信拿出來</em>＝已讀。
+          差別在於「拿出來」的定義因人而異：有門鈴的人是門鈴響完那一刻，沒門鈴的人是開信箱那一刻。
+        </p>
+      </div>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+sequenceDiagram
+    autonumber
+    participant A as 小美（寄件）
+    participant M as MeshStore
+    participant B as 阿宏（收件）
+    A->>M: send / dm
+    M->>M: 放進阿宏的信箱
+    M-->>A: delivery_status { delivered } ✓
+    alt 推播型（pi / claude-code）
+        M->>B: onDelivery 立即推播
+    else 抽取型（mcp / codex / opencode）
+        B->>M: drainDelivery() 清空信箱
+    end
+    M->>M: markRead(msgId, 阿宏)
+    M-->>A: delivery_status { read } ✓✓
+    M->>M: broadcast message_read patch
+    Note over M: 其他 peer 上同一則訊息的<br/>readBy 也補上阿宏
+        </pre>
+        <figcaption>圖 9a — 兩個勾勾各自的觸發點；房間訊息與 DM 走完全相同的路徑。</figcaption>
+      </figure>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>時刻</th><th>事件</th><th>由誰產生</th></tr></thead>
+          <tbody>
+            <tr><td>訊息進入收件人佇列</td><td class="mono-col">delivery_status { status: "delivered" }</td><td><code>deliverLocallyAndBroadcast()</code></td></tr>
+            <tr><td>收件人 bridge 真正消化它</td><td class="mono-col">delivery_status { status: "read" }</td><td><code>markRead()</code>（推播型或抽取型各自的時機）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        <code>emitDeliveryStatus()</code> 先用 <code>findMessageSender()</code> 回查訊息作者
+        （有 <code>room</code> 就查該房間歷史，沒有就掃所有 DM 串），再把狀態事件投遞給作者。
+        同時 <code>markRead()</code> 廣播 <code>message_read</code> patch，讓其他 peer 上的同一則訊息
+        <code>readBy</code> 也補上——這就是跨 peer 已讀一致的方式。房間訊息與 DM 走完全相同的路徑。
+      </p>
+    </section>
+
+    <!-- 10 ─────────────────────────────────────────────── -->
+    <section id="s10">
+      <h2><span class="num">10</span>時機提示 streamingBehavior</h2>
+      <p class="lede">傳的不是優先權，而是「希望你什麼時候反應」。收端如何對待，由各 bridge 自行決定。</p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          同事來找你的三種力道：<br>
+          <strong>steer</strong>＝走到你桌邊說「這個現在要處理」——你會在手邊這段落結束就抬頭。<br>
+          <strong>followUp</strong>＝貼張便利貼在螢幕上——你忙完再看。<br>
+          <strong>info</strong>＝丟進群組——有空再滑。
+        </p>
+        <p>注意：這只是<em>語氣</em>，不是命令。要不要照做，仍然是收訊那一方自己的判斷。</p>
+      </div>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+flowchart TB
+    A["事件抵達 bridge"] --> B{"訊息有帶<br/>streamingBehavior？"}
+    B -- 有 --> C["採用該提示"]
+    B -- 沒有 --> D{"isActionableEvent()<br/>DM／房間訊息／邀請？"}
+    D -- 是 --> E["視為 steer"]
+    D -- "否（狀態／成員異動）" --> F["視為 info"]
+    C --> G{"hint ≠ info<br/>且可行動？"}
+    E --> G
+    F --> G
+    G -- 是 --> H["即時推播<br/>（回合中就打斷）"]
+    G -- 否 --> I["只寫入待處理檔<br/>（下次順手看）"]
+        </pre>
+        <figcaption>圖 10a — Claude Code bridge 的判斷邏輯：<code>isActionableEvent(event) &amp;&amp; hint !== "info"</code>。</figcaption>
+      </figure>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>值</th><th>語意</th><th>pi</th><th>Claude Code</th><th>抽取型</th></tr></thead>
+          <tbody>
+            <tr><td><span class="pill steer">steer</span></td><td>現在就處理，在下一個決策點反應</td><td class="mono-col">deliverAs: "steer"</td><td class="mono-col">[STEER] + meta</td><td class="mono-col">[STEER] 前綴</td></tr>
+            <tr><td><span class="pill follow">followUp</span></td><td>手上的事做完再說</td><td class="mono-col">deliverAs: "followUp"</td><td class="mono-col">[FOLLOWUP] + meta</td><td class="mono-col">[FOLLOWUP] 前綴</td></tr>
+            <tr><td><span class="pill info">info</span></td><td>方便時看看（預設）</td><td>資訊緩衝區</td><td>無前綴</td><td>無前綴</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        沒帶這個欄位時，各 bridge 退回自己的啟發式：<code>isActionableEvent()</code> 判定為可行動的事件
+        （DM、房間訊息、邀請）視為 <code>steer</code>；狀態變更與成員異動視為 <code>info</code>。
+        Claude Code bridge 的規則是 <code>isActionableEvent(event) && hint !== "info"</code> 才做即時推播，
+        其餘一律只寫入待處理檔。
+      </p>
+    </section>
+
+    <!-- 11 ─────────────────────────────────────────────── -->
+    <section id="s11">
+      <h2><span class="num">11</span>Claude Code 喚醒機制</h2>
+      <p class="lede">整個專案唯一還碰檔案系統的地方——而它存在的理由，是要喚醒一個閒置中的行程。</p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          Claude Code 睡著的時候，你在它耳邊講話它聽不見；只有<strong>門鈴</strong>叫得醒它。
+          可是門鈴按鈕不在你手上——它在 Claude Code 自己的作息裡（每次用完工具、每次停下來、每次使用者輸入）。
+        </p>
+        <p>
+          所以做法是：訊息先<strong>塞進門口信箱</strong>（pending 檔），
+          等 Claude 自己走到門口時（hook 觸發），<strong>drain.sh 把整個信箱端走並敲門</strong>
+          （寫 stderr、exit 2），Claude 就醒過來看信。
+        </p>
+      </div>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+sequenceDiagram
+    autonumber
+    participant M as MeshStore
+    participant BR as claude-code bridge
+    participant FS as pending .jsonl
+    participant H as hooks/drain.sh
+    participant CC as Claude Code
+    M->>BR: onDelivery(agentId, event)
+    BR->>FS: appendPending(formatDeliveryEvent(event))
+    alt 可行動且 hint ≠ info
+        BR->>CC: notifications/claude/channel（即時，回合中）
+    end
+    Note over H,CC: PostToolUse / Stop / UserPromptSubmit 觸發
+    H->>FS: mv PENDING PENDING.draining-$$（原子換名）
+    H->>CC: 內容寫入 stderr，exit 2
+    CC->>CC: asyncRewake 包成 system-reminder 喚醒閒置的 Claude
+        </pre>
+        <figcaption>圖 11a — 原子換名（rename）是同步原語：行程內抽取與 hook 抽取搶同一個檔，只會有一方成功。</figcaption>
+      </figure>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+flowchart TB
+    A["兩條抽取路徑同時想拿信"] --> B["行程內：工具被呼叫時 drainPending()"]
+    A --> C["行程外：hook 觸發 drain.sh"]
+    B --> D{"mv PENDING PENDING.draining-$$"}
+    C --> D
+    D -- 成功的那一方 --> E["讀檔 → 刪檔 → 交付內容"]
+    D -- 失敗的那一方（ENOENT） --> F["什麼都沒有，安靜離開"]
+    E --> G["訊息不重複、不遺失"]
+    F --> G
+        </pre>
+        <figcaption>圖 11b — 原子換名當同步原語：搶得到檔名的人才有信，天生互斥。</figcaption>
+      </figure>
+
+      <h3>檔案為什麼要帶 PID</h3>
+      <p>
+        路徑是 <code>~/.agents/bus/pending/claude-code--&lt;cwd-slug&gt;--&lt;claudePid&gt;.jsonl</code>。
+        bridge 實際跑在 claude 之下約三層（tsx wrapper → loader → bridge），所以
+        <code>findClaudeCodePid()</code> 用 <code>ps -o ppid=,comm=</code> 往上走最多 10 跳，
+        找到 basename 為 <code>claude</code> 的祖先。<code>drain.sh</code> 用同樣的演算法算出同一個檔名。
+        少了這一段，同一個 cwd 下的兩個 Claude Code session 會互相吃掉對方的訊息。
+        找不到 PID 時退回不含 PID 的共用檔名，並在 stderr 明說這個限制。
+      </p>
+      <p>
+        啟動時 <code>cleanupStalePendingFiles()</code> 會掃同 cwd 的檔案，對每個檔名中的 PID 送 signal 0，
+        <code>ESRCH</code> 就刪檔——避免非優雅退出的 session 留下堆積。
+      </p>
+      <p>
+        當 LLM 主動呼叫 <code>agent_comms</code> 工具時，工具處理器也會 <code>drainPending()</code> 同一個檔，
+        把結果以 <code>[comms] Pending:</code> 前綴接在工具回應最前面。兩條抽取路徑共用 rename，因此不會重複也不會遺失。
+      </p>
+    </section>
+
+    <!-- 12 ─────────────────────────────────────────────── -->
+    <section id="s12">
+      <h2><span class="num">12</span>跨機聯邦</h2>
+      <p class="lede">協調者對協調者的持久 TLS 連線。只有標記為 federated 的房間會離開本地網格。</p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          兩棟公寓的<strong>櫃檯之間拉了一條專線</strong>。專線上只轉三種事：
+          「我們這邊有誰在」、「誰加入了那個<em>雙棟共用</em>的社團」、「那個社團裡有人說了什麼」。
+        </p>
+        <p>
+          <strong>沒掛上 federated 的房間，一個字都不會出樓。</strong>
+          專線每 30 秒互相「喂還在嗎」，10 秒沒回就當斷線。
+        </p>
+      </div>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+graph TB
+    subgraph MA["A 棟（本機網格）"]
+      CA["協調者 A"]
+      A1["小美"]
+      A2["阿宏"]
+      CA --- A1
+      CA --- A2
+    end
+    subgraph MB["B 棟（另一台機器）"]
+      CB["協調者 B"]
+      B1["大熊"]
+      CB --- B1
+    end
+    CA <-->|"TLS 專線 · 憑證釘選<br/>fed_handshake / fed_ack"| CB
+    CA -.->|"fed_agent_visible"| CB
+    CA -.->|"fed_room_message<br/>僅限 federated 房間"| CB
+    CA -.->|"fed_ping 每 30s"| CB
+        </pre>
+        <figcaption>圖 12a — 聯邦只發生在協調者之間；一般 peer 不知道專線存在。</figcaption>
+      </figure>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>訊息</th><th>方向</th><th>作用</th></tr></thead>
+          <tbody>
+            <tr><td class="mono-col">fed_handshake / fed_ack</td><td>雙向</td><td>交換 meshId、名稱、協定版本（<code>1.0.0</code>）</td></tr>
+            <tr><td class="mono-col">fed_agent_visible / fed_agent_gone</td><td>推送</td><td>同步可見 agent 的存在；新連線建立時做一次全量同步</td></tr>
+            <tr><td class="mono-col">fed_room_join / fed_room_leave</td><td>推送</td><td>聯邦房間的成員異動</td></tr>
+            <tr><td class="mono-col">fed_room_message</td><td>推送</td><td>轉送聯邦房間的訊息</td></tr>
+            <tr><td class="mono-col">fed_ping / fed_pong</td><td>雙向</td><td>30 秒心跳，10 秒未回應即判定斷線</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        框架與本地網格完全相同（換行分隔 JSON），只是方法名前綴不同；信任模型也相同——憑證釘選。
+        對應動作是 <code>mesh_fed_connect</code> / <code>mesh_fed_disconnect</code> / <code>mesh_fed_links</code>。
+      </p>
+    </section>
+
+    <!-- 13 ─────────────────────────────────────────────── -->
+    <section id="s13">
+      <h2><span class="num">13</span>清理與關閉</h2>
+      <p class="lede">殭屍 agent 靠 PID 探測，協調者消失靠重新競搶埠。</p>
+
+      <div class="analogy">
+        <span class="tag">生活比喻</span>
+        <p>
+          有人半夜搬走沒告訴任何人，名冊上卻還掛著他。櫃檯的辦法是<strong>每 5 秒去敲一次門</strong>——
+          不是真的打擾，只是<em>確認裡面還有沒有人</em>（signal 0 就是「敲門但不吵醒」）。
+          沒人應就在名冊上劃掉、廣播給大家；<strong>劃掉超過 30 分鐘</strong>的，名字整條擦掉，免得名冊越來越厚。
+        </p>
+        <p>
+          如果<strong>坐櫃檯的人自己不告而別</strong>？剩下的人一發現櫃檯空了，就一起衝去搶那張椅子，
+          先坐上的人接手，大約 100 毫秒完成——而且期間大家的對話完全沒中斷，因為櫃檯本來就不在對話路徑上。
+        </p>
+      </div>
+
+      <figure>
+        <pre class="mermaid">
+%%{init: {'theme':'neutral'}}%%
+flowchart TB
+    A["協調者每 5 秒"] --> B{"對每個 active agent<br/>process.kill(pid, 0)"}
+    B -- 有回應 --> C["還活著，跳過"]
+    B -- ESRCH --> D["標記 offline"]
+    D --> E["對其所屬房間送 member_status"]
+    D --> F["broadcastPatch(agent_offline)"]
+    A --> G{"offline 且 startedAt<br/>超過 30 分鐘？"}
+    G -- 是 --> H["從 agents / peerInfo /<br/>identityCache 徹底刪除"]
+    I["協調者崩潰"] --> J["其餘 peer 競搶綁 19876"]
+    J --> K["最先綁上者成為新協調者<br/>≈100ms · 對話不中斷"]
+        </pre>
+        <figcaption>圖 13a — 兩種「不告而別」：住戶死掉靠敲門偵測，櫃檯死掉靠搶椅子。</figcaption>
+      </figure>
+
+      <h3>陳舊探測（只在協調者上跑）</h3>
+      <ul>
+        <li>每 <strong>5 秒</strong>對所有 <code>active</code> agent 的 pid 送 signal 0；<code>ESRCH</code> 即標記 <code>offline</code>，
+            對其所屬房間送 <code>member_status</code>，並廣播 <code>agent_offline</code>。</li>
+        <li>另外清除 <code>startedAt</code> 已超過 <strong>30 分鐘</strong>的 offline agent，連同 <code>peerInfo</code>
+            與 <code>identityCache</code> 一併刪除，防止無限累積。</li>
+      </ul>
+
+      <h3>優雅關閉</h3>
+      <p>
+        bridge 攔截 <code>SIGTERM / SIGINT / SIGHUP</code>：先 <code>setAgentOffline(agentId)</code>
+        （廣播 <code>agent_offline</code> 並通知房間），再 <code>store.shutdown()</code>——
+        清掉待處理的 markRead timer、關閉聯邦連線、由 transport 銷毀所有 socket 與 listener。
+      </p>
+
+      <h3>協調者消失</h3>
+      <p>
+        協調者崩潰時，其餘 peer 重新競搶 19876，最先綁上的成為新協調者，實測約 100ms 恢復。
+      </p>
+      <div class="note">
+        <span class="tag">程式碼現況</span>
+        <p>「優雅移交給運行最久的 peer」的 <code>become_coordinator</code> 訊息在
+        <code>wire-protocol.ts</code> 有定義、在 TCP 與 TLS 兩個 transport 都有<strong>接收</strong>路徑
+        （<code>onBecomeCoordinator</code> → <code>handleBecomeCoordinator</code>），但目前沒有任何地方<strong>送出</strong>它。
+        也就是說，實務上的接手一律走「競搶綁埠」這條路。</p>
+      </div>
+    </section>
+
+    <!-- 14 ─────────────────────────────────────────────── -->
+    <section id="s14">
+      <h2><span class="num">14</span>協定參考表</h2>
+      <p class="lede">一頁看完線上會出現的全部訊息型別。</p>
+
+      <h3>MeshMessage（peer 之間）</h3>
+      <pre><code>state_sync · state_update · introduce · pong
+connect_request · connect_accepted · connect_rejected
+peer_list · peer_joined · peer_left · become_coordinator
+fed_handshake · fed_ack · fed_agent_visible · fed_agent_gone
+fed_room_message · fed_room_join · fed_room_leave · fed_ping · fed_pong</code></pre>
+
+      <h3>DeliveryEvent（送進 LLM 上下文）</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>type</th><th>可行動</th><th>攜帶</th></tr></thead>
+          <tbody>
+            <tr><td class="mono-col">room_message</td><td>是</td><td>完整 RoomMessage（含 readBy、streamingBehavior）</td></tr>
+            <tr><td class="mono-col">dm</td><td>是</td><td>完整 DmMessage</td></tr>
+            <tr><td class="mono-col">room_invite</td><td>是</td><td>房名、描述、邀請者 id／name／cwd</td></tr>
+            <tr><td class="mono-col">room_members</td><td>否</td><td>加入當下的成員快照</td></tr>
+            <tr><td class="mono-col">member_joined / member_left</td><td>否</td><td>房間與 agent id</td></tr>
+            <tr><td class="mono-col">member_status</td><td>否</td><td>agent 的新狀態</td></tr>
+            <tr><td class="mono-col">delivery_status</td><td>否</td><td>messageId、agent、delivered／read</td></tr>
+            <tr><td class="mono-col">invite_declined</td><td>否</td><td>拒絕者與理由</td></tr>
+            <tr><td class="mono-col">name_changed</td><td>否</td><td>舊名與新名</td></tr>
+            <tr><td class="mono-col">connection_request</td><td>是</td><td>connectionId、對方 peerId、名稱、憑證指紋</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>CommsAction（LLM 可呼叫的動作）</h3>
+      <pre><code>身分   register · update · whoami · list_agents
+房間   create_room · list_rooms · join_room · leave_room
+       invite · decline_invite · kick · destroy_room
+訊息   send · dm · read_room
+網格   mesh_connect · mesh_accept · mesh_reject · mesh_pending
+       mesh_discover · mesh_advertise · mesh_unadvertise
+       mesh_listen · mesh_unlisten · mesh_listeners · mesh_interfaces
+       mesh_set_visibility · mesh_get_visibility
+聯邦   mesh_fed_connect · mesh_fed_disconnect · mesh_fed_links</code></pre>
+      <p>
+        全部型別都由 Zod schema 推導（<code>src/core/types.ts</code>），JSON 邊界一律用
+        <code>Schema.parse()</code> 而非 <code>JSON.parse() as T</code>。
+      </p>
+    </section>
+
+    <!-- 15 ─────────────────────────────────────────────── -->
+    <section id="s15">
+      <h2><span class="num">15</span>原始碼地圖</h2>
+      <p class="lede">照著上面的流程順序，對應到實際檔案。</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>檔案</th><th>行數</th><th>負責</th></tr></thead>
+          <tbody>
+            <tr><td class="mono-col">core/mesh-store.ts</td><td class="mono-col">1566</td><td>狀態、投遞語意、房間規則、已讀、陳舊探測</td></tr>
+            <tr><td class="mono-col">core/tls-transport.ts</td><td class="mono-col">791</td><td>TLS + 指紋認證（Claude Code bridge 使用）</td></tr>
+            <tr><td class="mono-col">core/tcp-transport.ts</td><td class="mono-col">753</td><td>純 TCP，預設傳輸</td></tr>
+            <tr><td class="mono-col">core/ws-transport.ts</td><td class="mono-col">693</td><td>WebSocket 傳輸（供 Web UI）</td></tr>
+            <tr><td class="mono-col">core/tool.ts</td><td class="mono-col">644</td><td>CommsTool：動作分派與回應格式</td></tr>
+            <tr><td class="mono-col">core/bridge.ts</td><td class="mono-col">520</td><td>buildAction、ensureRegistered、formatDeliveryEvent 等共用件</td></tr>
+            <tr><td class="mono-col">core/federation.ts</td><td class="mono-col">530</td><td>協調者之間的 TLS 聯邦鏈路</td></tr>
+            <tr><td class="mono-col">core/identity.ts</td><td class="mono-col">342</td><td>手寫 DER 的自簽憑證與指紋</td></tr>
+            <tr><td class="mono-col">core/discovery*.ts</td><td class="mono-col">278 / 242 / 208</td><td>探索管理器、mDNS、Tailscale</td></tr>
+            <tr><td class="mono-col">core/wire-protocol.ts</td><td class="mono-col">139</td><td>訊息聯集、換行框架、dmKey</td></tr>
+            <tr><td class="mono-col">bridges/claude-code/channel.ts</td><td class="mono-col">300</td><td>channel 推播 + pending 檔 + PID 解析</td></tr>
+            <tr><td class="mono-col">hooks/drain.sh</td><td class="mono-col">—</td><td>原子抽取 → stderr → exit 2 → asyncRewake</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    依據 repository <code>shooter2062424/agent-comms</code> 分支 <code>claude/process-mechanism-artifacts-yvj0ds</code> 的原始碼撰寫 · v1.24.2
+  </footer>
+</div>
