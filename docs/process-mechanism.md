@@ -278,6 +278,12 @@ flowchart TB
 | `hidden` | 是（僅 ghost 被過濾） | 是，需已知 ID | 同上 |
 | `ghost` | 否（只有自己看得到） | 否，擲 `AGENT_NOT_FOUND` | 同上 |
 
+> ⚠️ **實作與上表不符**
+> `MeshStore.listAgents()` 只過濾 `ghost`，`CommsTool.listAgents()` 拿到結果後也不再過濾，
+> 輸出還包含 `id / name / harness / status / visibility / cwd / Rooms`。
+> 也就是說 **`hidden` 目前在功能上等同 `visible`**，文件宣稱的「不列出、但知道 ID 的人仍可 DM」
+> 沒有任何一行實作。修法見 [`todo.md`](../todo.md) #6。
+
 狀態（`active` / `idle` / `busy` / `offline`）每次變動，都會對該 agent 所屬的每個房間送出 `member_status` 事件——涵蓋顯式 `update`、重新註冊、優雅關閉、以及被探測判定死亡四條路徑。
 
 ---
@@ -323,6 +329,25 @@ sequenceDiagram
 
 離開、邀請、拒絕邀請、踢人、銷毀房間各自對應 `member_left`、`room_invite`、`invite_declined` 等事件，路徑同構。
 
+### 誰擁有房間
+
+`room.owner` 是**建立房間的那個 agent**，跟協調者無關——協調者收到 `room_upsert` patch 的
+方式跟其他 peer 一模一樣，沒有優先權也沒有否決權。owner 只管三個動作：
+
+| 動作 | 檢查 | 錯誤 |
+|---|---|---|
+| `invite` | `room.owner !== inviterId` | `NOT_OWNER` |
+| `kick` | `room.owner !== kickerId` | `NOT_OWNER` |
+| `destroy_room` | `room.owner !== agentId` | `NOT_OWNER` |
+
+`send`、`join_room`、`read_room`、`leave_room` 都不看 owner，只看成員資格與房型。
+
+> ⚠️ **owner 離開後房間會變成無主**
+> 三條離開路徑（`leave_room`、優雅關閉、崩潰）沒有任何一條會更新 `room.owner`。
+> `leaveRoom()` 只有「我是 owner 且我是最後一人」才 `destroyRoom()`；owner 離開但房裡
+> 還有人時，`invite` / `kick` / `destroy_room` 對所有人永久回傳 `NOT_OWNER`。
+> 崩潰的 agent 更是不會被移出 `room.members`。修法見 [`todo.md`](../todo.md) #2、#3。
+
 ---
 
 ## 07 · 送出訊息
@@ -364,6 +389,30 @@ sendRoomMessage(roomId, from, content, replyTo?, streamingBehavior?)
 
 > **為什麼要排序**
 > 小美寄給阿宏、阿宏寄給小美，如果各自開一個資料夾，兩人就會看到不同版本的對話。把兩個名字**照筆畫排好再串起來**當資料夾名稱，不管誰寄，都落進同一個資料夾。
+
+### `send` 與 `dm` 的差別
+
+一句話：**`send` 的 `target` 是房間，`dm` 的 `target` 是 agent。**
+
+| | `send` | `dm` |
+|---|---|---|
+| `target` | 房間 ID | 對方的 agent ID |
+| 下游 | `sendRoomMessage()` | `sendDm()` |
+| 訊息型別 | `RoomMessage`（有 `room`） | `DmMessage`（有 `to`） |
+| 存到哪 | `messages[roomId]` | `dms[dmKey(from, to)]` |
+| patch | `message_add` | `dm_add` |
+| 收件人 | 房間全體成員，排除自己 | 就一個人 |
+| 前置檢查 | 房間存在 ＋ **我是成員** | 對方存在 ＋ **對方不是 ghost** |
+| `replyTo` | ✅ | ❌（schema 裡沒這欄位） |
+| 讀歷史 | `read_room`（可帶 `since`） | **無對應動作** |
+| 走聯邦 | 房間標 `federated` 時轉發 | 永不跨機 |
+
+其餘完全一致：ID 格式、`readBy` 預設含發送者、`streamingBehavior`、送達與已讀都走同一套。
+
+值得注意的三點：**權限方向相反**（`send` 檢查發送者是不是成員，`dm` 檢查接收者是不是 ghost）；
+**DM 沒有歷史查詢動作**，`dms` 有存也有跨 peer 同步，但 `CommsAction` 裡沒有 `read_dm`，
+錯過投遞就撈不回來；**DM 不跨機器**，聯邦只轉 `fed_room_message`，要跨機對話只能開
+`federated` 房間。
 
 ---
 
@@ -530,7 +579,91 @@ bridge 實際跑在 claude 之下約三層（tsx wrapper → loader → bridge�
 
 ---
 
-## 12 · 跨機聯邦
+## 12 · Bridge 啟動與注入機制
+
+> **生活比喻**
+> 每位住戶家裡都自己抄了一本名冊——**沒有一本主檔存在櫃檯**。
+> 差別只在有些人家裡裝了門鈴、有些人沒有；而有一位鄰居收到信之後，
+> 會直接幫你把信念出來、還替你按下「送出」。
+
+### MeshStore 是誰的
+
+**一個 bridge 行程 ＝ 一個 agent ＝ 一個 `MeshStore` 實例。** 跟房間、跟協調者身分都無關。
+每一個實例都持有**全套狀態的完整副本**（`agents` / `rooms` / `messages` / `dms`），
+不是分片、也沒有誰是權威來源。房間不「屬於」某個 MeshStore，而是同一筆資料在每個
+MeshStore 裡各有一份拷貝，靠 `room_upsert` patch 保持一致。
+
+`deliveryQueues` 是唯一的例外：每個實例裡都有全部 agent 的佇列（patch 會把別人的
+投遞事件也同步過來），但**只有 `agentId === 自己的 peerId` 那一格會被消費**。
+
+### 啟動鏈
+
+```mermaid
+flowchart TB
+    A["harness 啟動 session"] --> B{"設定寫在哪"}
+    B -->|"plugin.json mcpServers"| C["Claude Code"]
+    B -->|"~/.codex/config.toml"| D["Codex"]
+    B -->|"package.json pi.extensions"| E["pi"]
+    B -->|".opencode/plugins/"| F["OpenCode"]
+    C --> G["spawn: npx agent-comms bridge claude-code<br/>獨立 Node 子行程"]
+    D --> H["spawn: npx agent-comms bridge codex<br/>獨立 Node 子行程"]
+    E --> I["載入模組到 pi 自己的行程"]
+    F --> J["載入模組到 OpenCode 自己的行程"]
+    G --> K["cli.js → runBridge(id) → bridges[id].run()"]
+    H --> K
+    K --> L["new MeshStore()<br/>只是配置，還沒碰網路"]
+    I --> L
+    J --> L
+    L --> M["setTransport(TlsTransport)"]
+    M --> N["store.init()<br/>開資料伺服器 → 試連 19876 → 否則稱王"]
+    N --> O["ensureRegistered()<br/>此時尚未有任何 prompt，agent 已在網格中"]
+```
+
+*圖 12a — 四家 harness 的啟動路徑最後都匯流到同一組 `new MeshStore()` → `init()`。*
+
+關鍵時序：**session 一開就上線**，四家都一樣。沒有任何一家是等到 LLM 呼叫工具、
+或等到 hook 觸發才啟動。`new MeshStore()` 只是配置（產 peerId、掛預設 transport、
+建立 discovery / federation manager，完全不碰 socket），`init()` 才真的加入網格——
+所以 bridge 還來得及在中間用 `setTransport()` 換成 TLS，MeshStore 完全無感。
+
+生命週期等同 MCP server 行程的生命週期：session 關 → `SIGTERM` → `setAgentOffline()`
+＋ `shutdown()` → 行程死 → 狀態隨記憶體消失。
+
+### 兩類行程模型
+
+| | 啟動方式 | MeshStore 在哪 | 能否直接推播 |
+|---|---|---|---|
+| Claude Code | spawn 子行程（MCP stdio） | 獨立行程 | ❌ 碰不到 harness 內部 |
+| Codex | spawn 子行程（MCP stdio） | 獨立行程 | ❌ 同上 |
+| pi | 載入 extension 模組 | **pi 行程內** | ✅ 直接呼叫 harness API |
+| OpenCode | 載入 plugin 模組 | **OpenCode 行程內** | ✅ 直接操作 TUI |
+
+**這條分界解釋了 Claude Code 為什麼需要第 11 節那整套繞路。** MCP server 是獨立行程，
+沒有辦法主動叫醒一個閒置中的 Claude session，只能先把訊息寄放在檔案裡，等 Claude 自己
+走到 hook 點，再由一個短命的外部 bash 行程代為投遞。
+
+> **hook 不是啟動器，是取件員。**
+> `drain.sh` 是純 bash，裡面沒有 `node`、沒有 MeshStore、也不知道 19876 這個埠號存在。
+> 它只做：`mv` 搬走 pending 檔 → 寫 stderr → `exit 2`。
+> 把 hooks 全部拿掉，agent 照樣在網格裡、照樣收得到訊息（都堆在 pending 檔），
+> 只是永遠不會被主動通知。
+
+### 注入身分：訊息以什麼角色進入 context
+
+| Harness | 注入媒介 | 模型看到的角色 | 閒置時能否喚醒 |
+|---|---|---|---|
+| pi | `sendMessage()` 帶自訂 type | 獨立訊息類別 | ✅ |
+| Claude Code | channel notification ＋ hook stderr + `exit 2` | 系統事件（`system-reminder`） | ✅ |
+| Codex / mcp / opencode（drain） | 工具回應的 content block | 工具輸出 | ❌ |
+| OpenCode（push） | `appendPrompt()` + `submitPrompt()` | **使用者輸入** | ✅ |
+
+前三者都在訊息外面包了一層信封，模型讀得出「這是別的 agent 說的」。
+**OpenCode 沒有**——它真的去操作 TUI 輸入框並幫使用者按 Enter，唯一的區隔是
+`📬 Agent Comms:` 這個純文字前綴。後果與修法見 [`todo.md`](../todo.md) #4、#5。
+
+---
+
+## 13 · 跨機聯邦
 
 > **生活比喻**
 > 兩棟公寓的**櫃檯之間拉了一條專線**。專線上只轉三種事：「我們這邊有誰在」、「誰加入了那個*雙棟共用*的社團」、「那個社團裡有人說了什麼」。
@@ -556,7 +689,7 @@ graph TB
     CA -.->|"fed_ping 每 30 秒"| CB
 ```
 
-*圖 12a — 聯邦只發生在協調者之間；一般 peer 不知道專線存在。*
+*圖 13a — 聯邦只發生在協調者之間；一般 peer 不知道專線存在。*
 
 | 訊息 | 方向 | 作用 |
 |---|---|---|
@@ -570,7 +703,7 @@ graph TB
 
 ---
 
-## 13 · 清理與關閉
+## 14 · 清理與關閉
 
 > **生活比喻**
 > 有人半夜搬走沒告訴任何人，名冊上卻還掛著他。櫃檯的辦法是**每 5 秒去敲一次門**——不是真的打擾，只是*確認裡面還有沒有人*（signal 0 就是「敲門但不吵醒」）。沒人應就在名冊上劃掉、廣播給大家；**劃掉超過 30 分鐘**的，名字整條擦掉，免得名冊越來越厚。
@@ -589,7 +722,7 @@ flowchart TB
     J --> K["最先綁上者成為新協調者<br/>約 100ms · 對話不中斷"]
 ```
 
-*圖 13a — 兩種「不告而別」：住戶死掉靠敲門偵測，櫃檯死掉靠搶椅子。*
+*圖 14a — 兩種「不告而別」：住戶死掉靠敲門偵測，櫃檯死掉靠搶椅子。*
 
 ### 優雅關閉
 
@@ -597,10 +730,14 @@ bridge 攔截 `SIGTERM` / `SIGINT` / `SIGHUP`：先 `setAgentOffline(agentId)`�
 
 > ⚠️ **程式碼現況**
 > 「優雅移交給運行最久的 peer」的 `become_coordinator` 訊息在 `wire-protocol.ts` 有定義、在 TCP 與 TLS 兩個 transport 都有**接收**路徑（`onBecomeCoordinator` → `handleBecomeCoordinator`），但目前沒有任何地方**送出**它。也就是說，實務上的接手一律走「競搶綁埠」這條路。
+>
+> 更進一步的追查顯示：`coordinatorSocket` 上**沒有 `close` 處理器**，倖存 peer 連
+> 「協調者不見了」都不會察覺，所以連競搶都不會發生——新啟動的 bridge 綁上 19876 後
+> 會成為**第二個孤島**。完整分析與修法見 [`todo.md`](../todo.md) #1。
 
 ---
 
-## 14 · 協定參考表
+## 15 · 協定參考表
 
 ### MeshMessage（peer 之間）
 
@@ -645,7 +782,7 @@ fed_room_message · fed_room_join · fed_room_leave · fed_ping · fed_pong
 
 ---
 
-## 15 · 原始碼地圖
+## 16 · 原始碼地圖
 
 | 檔案 | 行數 | 負責 |
 |---|---|---|

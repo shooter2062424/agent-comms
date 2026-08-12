@@ -82,9 +82,61 @@ CLAUDE.md 宣稱的「remaining peers race to bind the port（~100ms recovery）
 
 ---
 
+## P1 — bridge 注入機制的不一致與風險
+
+### 4. OpenCode 以「使用者輸入」的身分注入其他 agent 的訊息
+
+**現況**：`opencode/plugin.ts` 的 `onDelivery` 是操作 TUI 輸入框，把訊息填進去後幫使用者按 Enter：
+
+```typescript
+const message = `📬 Agent Comms: ${line}`;
+await client.tui.appendPrompt({ text: message });
+await client.tui.submitPrompt();
+```
+
+對照其他 bridge 的注入身分：
+
+| Harness | 進入 context 的形式 | 模型看到的角色 |
+|---|---|---|
+| Claude Code | `<system-reminder>` / channel notification | 系統事件 |
+| Codex / mcp | 工具回應的 content block | 工具輸出 |
+| pi | `sendMessage()` 帶自訂 type | 獨立訊息類別 |
+| **OpenCode** | `appendPrompt()` + `submitPrompt()` | **使用者輸入** |
+
+**後果**：
+
+- 其他 agent 送來的內容會以使用者身分進入 context，模型無法分辨「這是我的使用者說的」還是
+  「這是別的 agent 說的」。唯一的區隔是 `📬 Agent Comms:` 這個**純文字前綴**，而前綴是可被
+  訊息內容模仿的。等於任何在網格裡的 agent 都能對別人的 OpenCode 下指令。
+- `appendPrompt` 是**追加**到輸入框現有內容後面——訊息若在使用者打字打到一半時抵達，
+  會與使用者輸入黏在一起被一併送出。
+- 每則訊息都會觸發一個完整回合（`submitPrompt()` 等同按 Enter）。
+- 這些「假的使用者發言」會沉澱在對話歷史裡，後續每一輪都帶著它們當作使用者指示的脈絡。
+
+- [ ] **4a.** 改用 `client.session.prompt()` 之類不模擬使用者輸入的路徑，或至少
+      加上結構化標記讓模型能辨識來源。（目前 `session.prompt` 只在 `appendPrompt` 拋錯時
+      當 fallback 使用。）
+- [ ] **4b.** 若必須維持現行做法，前綴應改為模型可信任、內容無法偽造的形式。
+
+### 5. OpenCode 沒有實作 streamingBehavior，也沒有去重
+
+**現況**：`opencode/plugin.ts` 完全沒有引用 `extractStreamingBehavior()` 或 `isActionableEvent()`，
+不管 `steer` / `followUp` / `info` 一律立即送出，連 `member_status`、`delivery_status`
+這種純狀態事件也會觸發一次完整回合。同時它也沒有 pi 的 `recentDeliveries` 去重機制。
+
+**後果**：`onDelivery` 已推播過的事件，在 `session.idle` 事件裡又被 `drainDelivery()` 撈出來
+再送一次——同一則訊息重複出現在對話中是可能的。
+
+- [ ] **5a.** 比照 Claude Code / pi，依 `streamingBehavior` 與 `isActionableEvent()`
+      決定要不要打斷；資訊類事件應緩衝而非觸發回合。
+- [ ] **5b.** 加上去重（可直接沿用 pi 的 `recentDeliveries` 做法），並釐清
+      `onDelivery` 推播與 `session.idle` drain 兩條路徑的分工。
+
+---
+
 ## P2 — 可見性語意與文件不符
 
-### 4. `hidden` 在功能上等同 `visible`
+### 6. `hidden` 在功能上等同 `visible`
 
 **現況**：`MeshStore.listAgents()` 只做 `if (agent.visibility === "ghost" && ...) continue;`，
 `CommsTool.listAgents()` 拿到結果後完全不再過濾，輸出還包含 `id / name / harness /
@@ -93,19 +145,19 @@ status / visibility / cwd / Rooms`。
 **後果**：`hidden` 的 agent 連 ID、工作目錄、所屬房間全部被列出，甚至那欄還標著 `hidden`。
 文件宣稱的「不列出，但知道 ID 的人仍可 DM」完全沒有實作，三段可見性實際上只剩兩段。
 
-- [ ] **4a.** `listAgents()` 改成把 `hidden` 也一起濾掉（自己永遠看得到自己）：
+- [ ] **6a.** `listAgents()` 改成把 `hidden` 也一起濾掉（自己永遠看得到自己）：
       `if (agent.id !== requesterId && (visibility === "ghost" || visibility === "hidden")) continue;`
       `sendDm()` 不用動——它本來就只擋 `ghost`，剛好是正確語意。
-- [ ] **4b.** 補測試：A 設 hidden → B 的 `list_agents` 看不到 A，但 B 用已知 ID 仍 DM 得到 A。
+- [ ] **6b.** 補測試：A 設 hidden → B 的 `list_agents` 看不到 A，但 B 用已知 ID 仍 DM 得到 A。
 
 ---
 
 ## P3 — 文件與實作落差
 
-- [ ] **5.** CLAUDE.md 的「coordinator hands over to the longest-running peer」與
+- [ ] **7.** CLAUDE.md 的「coordinator hands over to the longest-running peer」與
       「~100ms recovery」在 #1 完成前是不實描述，應標註為規劃中或先行修正。
-- [ ] **6.** CLAUDE.md 的可見性表格在 #4 完成前與實作不符。
-- [ ] **7.** CLAUDE.md 未涵蓋 repo 中已存在的功能：TLS transport、federation、
+- [ ] **8.** CLAUDE.md 的可見性表格在 #6 完成前與實作不符。
+- [ ] **9.** CLAUDE.md 未涵蓋 repo 中已存在的功能：TLS transport、federation、
       mDNS / Tailscale discovery、listener policy、Web UI、web-push。
       （`docs/process-mechanism.md` 已補上這些。）
 
@@ -115,5 +167,6 @@ status / visibility / cwd / Rooms`。
 
 1. **#1a + #1b**（協調者 failover）— 投報率最高，且是 #2 崩潰路徑的前提
 2. **#2 + #3**（ownership 移交與成員清理）— 依賴 #1
-3. **#4**（hidden 過濾）— 獨立、改動最小
-4. **#5–#7**（文件同步）— 跟著上面的改動一起更新
+3. **#4 + #5**（OpenCode 注入身分與去重）— 獨立，#4 有安全性影響
+4. **#6**（hidden 過濾）— 獨立、改動最小
+5. **#7–#9**（文件同步）— 跟著上面的改動一起更新
